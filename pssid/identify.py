@@ -6,7 +6,6 @@ import json
 from collections import defaultdict
 from operator import itemgetter
 
-import tags2sst
 from helpers import *
 
 PREPS_MASTER = {"a", "abaft", "aboard", "about", "above", "abreast", "abroad", "absent", "across",
@@ -80,13 +79,13 @@ PREP_SPECIAL_MW_BEGINNERS = ["a", "according", "all", "bare", "because", "but", 
 
 
 def train(infile, args):
-    
+
     mwe_dict = defaultdict(lambda: defaultdict(int))
     lemma_pos_counts = defaultdict(lambda: defaultdict(int))
     advcl_dict = defaultdict(lambda: defaultdict(int))
     acl_dict = defaultdict(lambda: defaultdict(int))
     swes = defaultdict(int)
-    
+
     for sent in sentences(infile, conllulex=True):
         for token in sent.tokens:
             if token.lexlemma:
@@ -97,7 +96,7 @@ def train(infile, args):
                         mwe_dict["-p"][token.lexlemma] += 1
                 elif token.ss and token.ss[0].lower() == "p":
                     swes[token.lemma] += 1
-                
+
             lemma_pos_counts[token.lemma][token.ud_pos] += 1
             lemma_pos_counts[token.lemma][token.ptb_pos] += 1
 
@@ -106,13 +105,13 @@ def train(infile, args):
                 matrix = sent.tokens[int(head.head)-1]
                 head_has_dir_obj = any(t.head == head.head and t.deprel == "obj" for t in sent.tokens)
                 true = token.ss and token.ss[0].lower() == "p"
-                
+
                 if head.deprel == "advcl":
                     if true:
                         advcl_dict["+p"][matrix.lemma] += 1
                     else:
                         advcl_dict["-p"][matrix.lemma] += 1
-                        
+
                 if head.deprel == "acl":
                     if true:
                         acl_dict["+p"][matrix.lemma] += 1
@@ -128,13 +127,10 @@ def train(infile, args):
     model = {"p_mwe": prep_mwe_list, "non_p_mwe": non_prep_mwe_list, "advcl": advcl_list, "acl": acl_list} # , "lemma_pos": lemma_pos_counts
 
     outfile = args.model_out if args.model_out else infile.split("/")[-1] + ".p{}-P{}-advcl{}-acl{}.model".format(args.p_mwe_min, args.non_p_mwe_min, args.advcl_min, args.acl_min)
-    
+
     json.dump(model, open(outfile, "w", encoding='utf-8'), indent=2)
 
     return model
-
-
-
 
 def print_target(token, sentence, index, checkmark, lexcat, context):
     for cont in range(context, 0, -1):
@@ -225,7 +221,7 @@ def identify(model, args):
         non_prep_mwe_list = model["non_p_mwe"]
 
     tp, fp, fn, tn = 0, 0, 0, 0
-    
+
     lemma_pos_counts = {}
     for sent in sentences(infile):
         for token in sent.tokens:
@@ -233,7 +229,7 @@ def identify(model, args):
                 lemma_pos_counts[token.lemma] = defaultdict(int)
             lemma_pos_counts[token.lemma][token.ud_pos] += 1
             lemma_pos_counts[token.lemma][token.ptb_pos] += 1
-        
+
     max_mwe_length = max(len(w.split()) for w in mwe_list)
     print("max MWE length={}".format(max_mwe_length), file=sys.stderr)
     mw_beginners = set([w.split()[0] for w in list(mwe_list)+list(non_prep_mwe_list) if len(w.split()) >= 2]).union(set(PREP_SPECIAL_MW_BEGINNERS))
@@ -249,7 +245,7 @@ def identify(model, args):
 
         length = len(sent.tokens)
         i = 0
-        k = 0        
+        k = 0
         while i < length:
             token = sent.tokens[i]
             lexcat = ""
@@ -271,24 +267,30 @@ def identify(model, args):
                 if mwe and token.lemma in mw_beginners:
                     for j in range(min(length, i+max_mwe_length)-1, i+1, -1):
                         ngram = [t for t in sent.tokens[i:j]]
-                        ngram_lemma = " ".join([t.lemma for t in ngram])
-                        if ngram_lemma in non_prep_mwe_list:
-                            skip = True
-                            k = j
-                            break
-                        if ngram_lemma in mwe_list: # find the longest possible mwe
-                            mwes.append([int(t.offset) for t in ngram])
-                            token.checkmark = "{}:{}".format(mwe_counter, 1) + "**"
-                            lemma = ngram_lemma
-                            for current_mwe_counter, tok in enumerate(ngram[1:], start=2):
-                                sent.tokens[int(tok.offset)-1].checkmark = "{}:{}".format(mwe_counter, current_mwe_counter)
-                            if ngram[-1].ud_pos in ("ADP", "SCONJ"):
-                                lexcat = "P"
-                            else:
-                                lexcat = "PP"
-                            mwe_counter += 1
-                            k = j
-                            break
+                        all_tokens_have_lemma = True
+                        for t in ngram:
+                            if t.lemma is None:
+                                all_tokens_have_lemma = False
+                        # Make sure all tokens in the potential MWE have lemmas. Otherwise, don't proceed.
+                        if all_tokens_have_lemma:
+                            ngram_lemma = " ".join([t.lemma for t in ngram])
+                            if ngram_lemma in non_prep_mwe_list:
+                                skip = True
+                                k = j
+                                break
+                            if ngram_lemma in mwe_list: # find the longest possible mwe
+                                mwes.append([int(t.offset) for t in ngram])
+                                token.checkmark = "{}:{}".format(mwe_counter, 1) + "**"
+                                lemma = ngram_lemma
+                                for current_mwe_counter, tok in enumerate(ngram[1:], start=2):
+                                    sent.tokens[int(tok.offset)-1].checkmark = "{}:{}".format(mwe_counter, current_mwe_counter)
+                                if ngram[-1].ud_pos in ("ADP", "SCONJ"):
+                                    lexcat = "P"
+                                else:
+                                    lexcat = "PP"
+                                mwe_counter += 1
+                                k = j
+                                break
 
                 if not token.checkmark and not skip:
                     token.checkmark += heuristicADP(token) \
@@ -297,7 +299,7 @@ def identify(model, args):
                                        + heuristicADV(token) \
                                        + heuristicTO(token, sent, model) \
                                        + heuristicForXTo(token, sent)
-                    
+
             first_in_mwe = False
             if token.checkmark.endswith("*"):
                 if token.checkmark.endswith("**"):
@@ -310,35 +312,6 @@ def identify(model, args):
 
             if not args.lexcat:
                 lexcat = ""
-                
-            if token.checkmark == "*" or first_in_mwe:
-                if t:
-                    # exact match
-                    if token.lexlemma == lemma:
-                        if args.tp and not evl:
-                            print_target(token, sent, i, token.checkmark, lexcat, args.context)
-                        tp += 1
-                    else:
-                        if args.fp and not evl:
-                            print_target(token, sent, i, token.checkmark, lexcat, args.context)
-                        fp += 1
-                        if args.fn and not evl:
-                            print_target(token, sent, i, token.checkmark, lexcat, args.context)
-                        fn += 1
-                else:
-                    if args.fp and not evl:
-                        print_target(token, sent, i, token.checkmark, lexcat, args.context)
-                    fp += 1
-            else:
-                if t:
-                    if args.fn and not evl:
-                        print_target(token, sent, i, token.checkmark, lexcat, args.context)
-                    fn += 1
-                else:
-                    if args.tn and not evl:
-                        print_target(token, sent, i, token.checkmark, lexcat, args.context)
-                    tn += 1
-
             if not (args.sst or evl or args.tp or args.fp or args.fn or args.tn):
                 print("{}\t{}".format(token.orig, token.checkmark) + ("\t{}".format(lexcat) if lexcat else ""))
 
@@ -359,7 +332,6 @@ def identify(model, args):
                 _json["lemmas"].append(tok.lemma)
                 if tok.checkmark.endswith("*"):
                     _json["labels"][tok.offset] = [tok.word, "Locus"]
-            print("{}\t{}\t{}".format(sent.meta_dict.get("sent_id", args.file.split("/")[-1].rsplit(".", maxsplit=1)[0]+"."+str(si)), tags2sst.render(_sent, _json["_"], []).decode("utf-8"), json.dumps(_json)))
 
         elif not (evl or args.tp or args.fp or args.fn or args.tn):
             print()
@@ -375,7 +347,7 @@ def identify(model, args):
         print("\nP\tR\tF")
         print("{}\t{}\t{}".format(p, r, f))
 
-        
+
 def pass_trough_gold(args):
     for sent in sentences(args.file, conllulex=True):
         if not (args.sst or args.eval or args.tp or args.fp or args.fn or args.tn):
@@ -417,9 +389,9 @@ def pass_trough_gold(args):
                 _json["lemmas"].append(tok.lemma)
                 if tok.checkmark.endswith("*"):
                     _json["labels"][tok.offset] = [tok.word, tok.ss.split(".")[1]]
-            print("{}\t{}\t{}".format(sent.meta_dict["streusle_sent_id"], sent.meta_dict["mwe"], json.dumps(_json)))
+            #print("{}\t{}\t{}".format(sent.meta_dict["streusle_sent_id"], sent.meta_dict["mwe"], json.dumps(_json)))
 
-        
+
 def main(args):
     if args.gold:
         pass_trough_gold(args)
@@ -434,14 +406,14 @@ def main(args):
 
         identify(model, args)
 
-        
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='finds markables heuristically by POS tags and annotates them with an asterisk (*), or two of them (**) for MWEs')
     parser.add_argument('file', type=str, help='path to the .conllulex file')
     parser.add_argument('-f', '--training-file', type=str, help='path to the training .conllulex file')
     parser.add_argument('-M', '--model-file', type=str, help='path to the model file (read)')
     parser.add_argument('-o', '--model-out', type=str, help='path to the model file (write)')
-    parser.add_argument('-m', '--mwe', action='store_true', help='also look for mwes')
+    parser.add_argument('-m', '--mwe', action='store_true', default=True, help='also look for mwes')
     parser.add_argument('-l', '--mwe-list', type=str, help='read lexical list of MWEs from file MWE_LIST')
     parser.add_argument('-i', '--mwe-anti-list', type=str, help='read lexical list of MWEs to EXCLUDE from file MWE_ANTI_LIST')
     parser.add_argument('-e', '--eval', action='store_true', help='output evaluation instead of annotated lines; works ONLY with full .conllulex format')
@@ -460,5 +432,5 @@ if __name__ == "__main__":
 #    parser.add_argument('-v', '--verbose', action='store_true', help='')
 
     args = parser.parse_args()
-    
+
     main(args)
